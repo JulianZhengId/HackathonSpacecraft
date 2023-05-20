@@ -321,6 +321,7 @@ class SpacecraftEnv(gym.Env):
         self.T_c_fail = 0
         self.T_r_fail = 0
         self.time_ctr = 0
+        self.prev_velocity = [0,0]
 
         #rocket initial data
         self.gravity = gravity
@@ -443,6 +444,9 @@ class SpacecraftEnv(gym.Env):
         k_10 = 10000
         k_11 = 5
         k_12 = 5
+        k_13 = 1
+        k_14 = 5
+        k_15 = 5
         ### 1
         distance_to_landing_pad = np.linalg.norm(np.array(self.rocket_position) - np.array(self.pad_position))
         reward -= distance_to_landing_pad * k_1
@@ -514,9 +518,12 @@ class SpacecraftEnv(gym.Env):
             reward -= k_9
         ### 7
         reward -= k_12 * self.rocket_angle * self.rocket_angular_vel
+        reward += k_14 * (self.rocket_velocity[1] - self.prev_velocity[1])
+        reward += k_15 * (self.rocket_velocity[0] - self.prev_velocity[0])
         eps = 0.05
         if self.rocket_position[1] <= math.sqrt(a**2+b**2):
             reward += k_10 * np.exp(-k_11 * abs(self.rocket_position[0]))
+            reward += k_13 * (10 - abs(self.rocket_angle))
             self.terminated = True
 
         info = {}     
@@ -551,6 +558,7 @@ class SpacecraftEnv(gym.Env):
 
     def reset(self):
         self.img = np.zeros((500, 500, 3), dtype='uint8')
+        self.prev_velocity = [0,0]
         self.T_l_fail = 0
         self.T_c_fail = 0
         self.T_r_fail = 0
@@ -583,20 +591,20 @@ class SpacecraftEnv(gym.Env):
         angular_vel = self.rocket_angular_vel
         angular_accel = self.rocket_angular_accel
                 
-        pos_x = []
-        pos_y = []
+        pos_x.clear()
+        pos_y.clear()
         
-        phi = [] # negative sign, because rotation matrix is defined incorrelty with regard to mathematical positive rotation
+        phi.clear() # negative sign, because rotation matrix is defined incorrelty with regard to mathematical positive rotation
         
-        vel_x = []
-        vel_y = []
+        vel_x.clear()
+        vel_y.clear()
 
-        alphalog = []
-        betalog = []
+        alphalog.clear()
+        betalog.clear()
 
-        Tlog = []
+        Tlog.clear()
         
-        hello = []
+        hello.clear()
         
         self.counter  = 0
                 
@@ -653,7 +661,7 @@ env = SpacecraftEnv(
 
 log_path = "logging"
 model = PPO("MlpPolicy", env, verbose=1)
-model.learn(total_timesteps=int(20), progress_bar=True)
+model.learn(total_timesteps=int(50000), progress_bar=True)
 model.save("PPO-Spaceraft_1")
 
 

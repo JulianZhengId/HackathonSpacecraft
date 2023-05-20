@@ -261,28 +261,58 @@ class SpacecraftEnv(gym.Env):
         self.angle_history = [] # tuple of theta, alpha, beta
         self.velocity_history = [] # tuple of xdot, ydot
         self.thrust_history = [] # tuple of left, center, right engine
+        self.angular_history = [] # thetadots
 
         
         self.linear = linear
         
         # thrust engines (3)
         # control alpha beta
-        self.action_space = spaces.Box(-1, 1, (5,), dtype='int8')
+        self.action_space = spaces.Box(-1, 1, (5,), dtype='float32')
         
+#        low = np.array(
+#            [
+#                # these are bounds for position
+#                # realistically the environment should have ended
+#                # long before we reach more than 50% outside
+#                -1.5,
+#                -1.5,
+#                # velocity bounds is 5x rated speed
+#                -5.0,
+#                -5.0,
+#                -math.pi,
+#                -5.0,
+#                -2.0,
+#                -2.0,
+#            ]
+#        ).astype(np.float32)
+#        high = np.array(
+#            [
+#                # these are bounds for position
+#                # realistically the environment should have ended
+#                # long before we reach more than 50% outside
+#                1.5,
+#                1.5,
+#                # velocity bounds is 5x rated speed
+#                5.0,
+#                5.0,
+#                math.pi,
+#                5.0,
+#                2.0,
+#                2.0,
+#            ]
+#        ).astype(np.float32)
         low = np.array(
             [
-                # these are bounds for position
-                # realistically the environment should have ended
-                # long before we reach more than 50% outside
-                -1.5,
-                -1.5,
+                -500,
+                -500,
                 # velocity bounds is 5x rated speed
-                -5.0,
-                -5.0,
+                -1000,
+                -1000,
                 -math.pi,
-                -5.0,
-                -2.0,
-                -2.0,
+                -60.0,
+                math.radians(-60),
+                math.radians(-60),
             ]
         ).astype(np.float32)
         high = np.array(
@@ -290,19 +320,19 @@ class SpacecraftEnv(gym.Env):
                 # these are bounds for position
                 # realistically the environment should have ended
                 # long before we reach more than 50% outside
-                1.5,
-                1.5,
+                2880,
+                1920,
                 # velocity bounds is 5x rated speed
-                5.0,
-                5.0,
+                1000,
+                1000,
                 math.pi,
-                5.0,
-                2.0,
-                2.0,
+                60.0,
+                math.radians(60),
+                math.radians(60),
             ]
-        ).astype(np.float32)
-        
+        ).astype(np.float32) 
         self.observation_space = spaces.Box(low, high)
+        self.reason = ""
 
     def step(self, action):
         #CALCULATION
@@ -324,17 +354,10 @@ class SpacecraftEnv(gym.Env):
         self.rocket_velocity[1] = coor_sets[4]
         self.velocity_history.append((self.rocket_velocity[0], self.rocket_velocity[1]))
         self.rocket_angular_vel = coor_sets[5]
+        self.angular_history.append(self.rocket_angular_vel)
         #print(self.rocket_position)
         #print(self.rocket_velocity)
         
-        self.thrust_center += self.thrust_rate * action[0] * self.h
-        self.thrust_right += self.thrust_rate * action[1] * self.h
-        self.thrust_left += self.thrust_rate * action[2] * self.h
-        self.thrust_history.append((self.thrust_left, self.thrust_center, self.thrust_right))
-        self.alpha += self.alphaBetaRate * action[3] * self.h
-        self.beta += self.alphaBetaRate * action[4] * self.h
-                
-        self.angle_history.append((self.rocket_angle, self.alpha, self.beta))
         #RENDERING
         #cv2.imshow('Spacecraft Env', self.img)
         #cv2.waitKey(1)
@@ -344,37 +367,115 @@ class SpacecraftEnv(gym.Env):
         
         #REWARD and TERMINATION
         reward = 0
+        k_1 = 100
+        k_2 = 100
+        k_3 = 100
+        k_4 = 0
+        k_5 = 100000
+        k_6 = 100000
+        k_7 = 100000
+        k_8 = 100000
+        k_9 = 100000
+        k_10 = 10000
         ### 1
         distance_to_landing_pad = np.linalg.norm(np.array(self.rocket_position) - np.array(self.pad_position))
-        reward -= distance_to_landing_pad * 10
-        
+        reward -= distance_to_landing_pad * k_1
         ### 2
-        epsilon = 0.005
-        y_com = self.b * np.cos(self.rocket_angle) + abs(self.a * np.sin(self.rocket_angle))
-        if (abs(y_com - self.rocket_position[1]) <= epsilon):
-            self.terminated = True
-            print("#2: " + str(self.rocket_position[0]) + " "+ str(self.rocket_position[1]))
-            if (self.rocket_velocity[1] <= 1):
-                
-                reward += 10000 * (1.001 - self.rocket_velocity[1])    
-            else:
-                reward -= 10000
-
+        velocity = self.rocket_velocity[1] * self.rocket_velocity[1] + self.rocket_velocity[0]  * self.rocket_velocity[0]
+        velocity = velocity**0.5
+        reward -= velocity * k_2
         ### 3
-        if (self.rocket_angle < math.radians(-30) or self.rocket_angle > math.radians(30)):
-            reward -= (abs(self.rocket_angle) - math.radians(30))
-            
+        reward -= abs(self.rocket_angle) * k_3
         ### 4
-        if (self.rocket_position[1] < self.pad_position[1]):
-            reward -= 25
-            
+        reward -= abs(self.rocket_angular_vel) * k_4
+
+        self.thrust_center += self.thrust_rate * action[0] * self.h
+        self.thrust_right += self.thrust_rate * action[1] * self.h
+        self.thrust_left += self.thrust_rate * action[2] * self.h
+        self.thrust_history.append((self.thrust_left, self.thrust_center, self.thrust_right))
+        self.alpha += self.alphaBetaRate * action[3] * self.h
+        self.beta += self.alphaBetaRate * action[4] * self.h
+        self.angle_history.append((self.rocket_angle, self.alpha, self.beta))
         ### 5
-        if (out_of_frame(self.rocket_position)):
-            print("#5: " + str(self.rocket_position[0]) + " " + str(self.rocket_position[1]))
-            reward -= 10000
+        if self.thrust_left > max_thrust:
+            self.thrust_left = max_thrust
+            reward -= k_5
+        if self.thrust_center > max_thrust:
+            self.thrust_center = max_thrust
+            reward -= k_6
+        if self.thrust_right > max_thrust:
+            self.thrust_right = max_thrust
+            reward -= k_7
+        if self.thrust_left < 0:
+            self.thrust_left = 0
+            reward -= k_5
+        if self.thrust_center < 0:
+            self.thrust_center = 0
+            reward -= k_6
+        if self.thrust_right < 0:
+            self.thrust_right = 0
+            reward -= k_7
+        ### 6
+        max_gimbal = math.radians(60)
+        if self.alpha > max_gimbal:
+            self.alpha = max_gimbal
+            reward -= k_8
+        if self.beta > max_gimbal:
+            self.beta = max_gimbal
+            reward -= k_9
+        if self.alpha < -max_gimbal:
+            self.alpha = -max_gimbal
+            reward -= k_8
+        if self.beta < -max_gimbal:
+            self.beta = -max_gimbal
+            reward -= k_9
+        ### 7
+        eps = 0.05
+        if self.rocket_position[1] <= math.sqrt(a**2+b**2):
+            if abs(self.rocket_position[0]) <= eps:
+                reward += k_10
             self.terminated = True
-            
-        info = {}    
+        #### 2
+#        epsilon = 0.005
+#        y_com = self.b * np.cos(self.rocket_angle) + abs(self.a * np.sin(self.rocket_angle))
+#        if (abs(y_com - self.rocket_position[1]) <= epsilon):
+#            self.terminated = True
+#            print("#2: " + str(self.rocket_position[0]) + " "+ str(self.rocket_position[1]))
+#            self.reason = "Rocket has landed"
+#            if (self.rocket_velocity[1] <= 1):
+#                
+#                reward += 10000 * (1.001 - self.rocket_velocity[1])    
+#            else:
+#                reward -= 10000
+#
+#        ### 3
+#        if (self.rocket_angle < math.radians(-30) or self.rocket_angle > math.radians(30)):
+#            reward -= (abs(self.rocket_angle) - math.radians(30))
+#        ### 4
+#        if (self.rocket_position[1] < self.pad_position[1]):
+#            reward -= 25
+#            
+        ### 5
+#        if (out_of_frame(self.rocket_position)):
+#            print("#5: " + str(self.rocket_position[0]) + " " + str(self.rocket_position[1]))
+#            self.reason = "out of frame"
+#            reward -= 10000
+#            self.terminated = True
+        info = {}     
+        #update observation
+        rocket_position_x = self.rocket_position[0]
+        rocket_position_y = self.rocket_position[1]
+
+        rocket_velocity_x = self.rocket_velocity[0]
+        rocket_velocity_y = self.rocket_velocity[1]
+
+        rocket_angle = self.rocket_angle
+        rocket_angular_vel = self.rocket_angular_vel
+        
+        alpha = self.alpha
+        beta = self.beta
+
+        observation = [rocket_position_x, rocket_position_y, rocket_velocity_x, rocket_velocity_y, rocket_angle, rocket_angular_vel, alpha, beta]
         return observation, reward, self.terminated, info
 
     def reset(self):
@@ -385,16 +486,25 @@ class SpacecraftEnv(gym.Env):
         self.rocket_velocity = [-25, -25] #vec2 velocity
         self.rocket_accel = [0, 0]
         
-        self.rocket_angle = 0 #float angle
+        self.rocket_angle = phi0 #float angle
         self.rocket_angular_vel = 0 #float angular velocity
         self.rocket_angular_accel = 0
         self.is_touching_pad = False #bool is_touching_pad
         
         #general data
         self.terminated = False
+        self.reason = ""
         info = {}
         self.reward = 0
-        
+
+        # position history
+        self.pos_history = [] # tuple of x,y
+        self.angle_history = [] # tuple of theta, alpha, beta
+        self.velocity_history = [] # tuple of xdot, ydot
+        self.thrust_history = [] # tuple of left, center, right engine
+        self.angular_history = [] # thetadots
+
+
         rocket_position_x = self.rocket_position[0]
         rocket_position_y = self.rocket_position[1]
         rocket_velocity_x = self.rocket_velocity[0]
@@ -462,7 +572,7 @@ env.close()
 
 
 model = PPO("MlpPolicy", env, verbose=1)
-model.learn(total_timesteps=int(5000), progress_bar=True)
+model.learn(total_timesteps=int(50000), progress_bar=True)
 model.save("PPO-Spaceraft_1")
 
 
@@ -483,8 +593,8 @@ n_timesteps = np.shape(env.pos_history)[0]
 #resolution
 image_height = 1080
 image_width = 1920
-px = np.array([i[0] for i in env.pos_history])
-py = np.array([i[1] for i in env.pos_history])
+px = np.array([i[0] for i in env.pos_history] + [env.pos_history[-1][0]]*int(FPS))
+py = np.array([i[1] for i in env.pos_history] + [env.pos_history[-1][1]]*int(FPS))
 scaled_x, scaled_y = scaling(px, py, image_width, image_height)
 
 flight_path = np.array([scaled_x, scaled_y]).T
@@ -497,7 +607,12 @@ left_fin_polygon[:,0] = left_fin_polygon[:,0] * -1
 
 
 video = cv2.VideoWriter(safe_name,cv2.VideoWriter_fourcc('m','p','4','v'), FPS, (image_width,image_height))
-for i in range(n_timesteps-1):
+env.angle_history += [env.angle_history[-1]]*int(FPS)
+env.thrust_history += [env.thrust_history[-1]]*int(FPS)
+env.pos_history += [env.pos_history[-1]]*int(FPS)
+env.angular_history += [env.angular_history[-1]]*int(FPS)
+env.velocity_history += [env.velocity_history[-1]]*int(FPS)
+for i in range(len(env.pos_history)):
     # image = 255 * np.ones((image_height,image_width,3), np.uint8)
     # replace with cv2.imread(imageFile)
     image = cv2.imread('background.png')
@@ -529,7 +644,9 @@ for i in range(n_timesteps-1):
     image = cv2.putText(image, 'Right Engine Thrust: %i [%%]' % int(env.thrust_history[i][2]/max_thrust*100), (50, 170), font, fontScale, color, thickness, cv2.LINE_AA)
     image = cv2.putText(image, 'Left Engine Gimbal Angle: %i [Degrees]' % int(-env.angle_history[i][1]*180/np.pi), (50, 190), font, fontScale, color, thickness, cv2.LINE_AA)
     image = cv2.putText(image, 'Right Engine Gimbal Angle: %i [Degrees]' % int(-env.angle_history[i][2]*180/np.pi), (50, 210), font, fontScale, color, thickness, cv2.LINE_AA)
-
+    #if env.terminated:
+    #reason = env.reason if env.reason != "" else "Out of time"
+    #image = cv2.putText(image, f"Simulation is terminated with reason: {reason}", (50, 230), font, fontScale, color, thickness, cv2.LINE_AA)
     video.write(image)
 video.release()
 
@@ -538,33 +655,33 @@ video.release()
 
 # In[ ]:
 
-
 plt.figure(figsize=(24,5))
 plt.subplot(141)
-plt.plot(time[:-1], states[0,:-1], label='Position x')
-plt.plot(time[:-1], states[1,:-1], label='Position y')
+plt.plot(time[:len(env.pos_history)], px, label='Position x')
+plt.plot(time[:len(env.pos_history)], py, label='Position y')
 plt.xlabel('Time [s]')
 plt.ylabel('Position [m]')
 plt.legend()
 plt.grid()
-
+angle = np.array([i[0] for i in env.angle_history])
 plt.subplot(142)
-plt.plot(time[:-1], states[2,:-1]*180/np.pi, label='Rotation phi')
+plt.plot(time[:len(env.angle_history)], angle*180/np.pi, label='Rotation phi')
 plt.xlabel('Time [s]')
 plt.ylabel('Angle [°]')
 plt.legend()
 plt.grid()
-
+velo_x = [i[0] for i in env.velocity_history]
+velo_y = [i[1] for i in env.velocity_history]
 plt.subplot(143)
-plt.plot(time[:-1], states[3,:-1], label='Velocity x')
-plt.plot(time[:-1], states[4,:-1], label='Velocity y')
+plt.plot(time[:len(env.velocity_history)], velo_x, label='Velocity x')
+plt.plot(time[:len(env.velocity_history)], velo_y, label='Velocity y')
 plt.xlabel('Time [s]')
 plt.ylabel('Velocity [m/s]')
 plt.legend()
 plt.grid()
 
 plt.subplot(144)
-plt.plot(time[:-1], states[5,:-1]*180/np.pi, label='Velocity phi')
+plt.plot(time[:len(env.angular_history)], np.array(env.angular_history)*180/np.pi, label='Velocity phi')
 plt.xlabel('Time [s]')
 plt.ylabel('Velocity [°/s]')
 plt.legend()

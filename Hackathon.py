@@ -196,6 +196,11 @@ phi = []#-states[2,:-1] # negative sign, because rotation matrix is defined inco
 vel_x = []#states[3,:-1]
 vel_y = []#states[4,:-1]
 
+alphalog = []
+betalog = []
+
+Tlog = []
+
 alpha = 0
 beta = 0
 
@@ -359,6 +364,9 @@ class SpacecraftEnv(gym.Env):
         self.thrust_history.append((self.thrust_left, self.thrust_center, self.thrust_right))
         self.alpha += self.alphaBetaRate * action[3] * self.h
         self.beta += self.alphaBetaRate * action[4] * self.h
+        alphalog.append(self.alpha)
+        betalog.append(self.beta)
+        Tlog.append((self.thrust_left, self.thrust_center, self.thrust_right))
 
         ### 5
         if self.thrust_left > max_thrust:
@@ -475,6 +483,11 @@ class SpacecraftEnv(gym.Env):
         
         vel_x = []
         vel_y = []
+
+        alphalog = []
+        betalog = []
+
+        Tlog = []
         
         hello = []
         
@@ -545,9 +558,9 @@ env.close()
 image_height = 1080
 image_width = 1920
 
-for i in range(30):
-    pos_x[-i] = 0
-    pos_y[-i] = 0
+#for i in range(30):
+#    pos_x[-i] = 0
+#    pos_y[-i] = 0
 pos_x = np.array(pos_x)
 pos_y = np.array(pos_y)
 phi = np.array(phi)
@@ -611,11 +624,11 @@ for i in range(n_timesteps-1):
     image = cv2.putText(image, 'Vertical Position: %i [m]' % int(pos_y[i]), (50, 70), font, fontScale, color, thickness, cv2.LINE_AA)
     image = cv2.putText(image, 'Horizontal Velocity: %i [m/s]' % int(vel_x[i]), (50, 90), font, fontScale, color, thickness, cv2.LINE_AA)
     image = cv2.putText(image, 'Vertical Velocity: %i [m/s]' % int(vel_y[i]), (50, 110), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Left Engine Thrust: %i [%%]' % int(T_l/max_thrust*100), (50, 130), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Center Engine Thrust: %i [%%]' % int(T_c/max_thrust*100), (50, 150), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Right Engine Thrust: %i [%%]' % int(T_r/max_thrust*100), (50, 170), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Left Engine Gimbal Angle: %i [Degrees]' % int(-alpha*180/np.pi), (50, 190), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Right Engine Gimbal Angle: %i [Degrees]' % int(-beta*180/np.pi), (50, 210), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Left Engine Thrust: %i [%%]' % int(Tlog[i][0]/max_thrust*100), (50, 130), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Center Engine Thrust: %i [%%]' % int(Tlog[i][1]/max_thrust*100), (50, 150), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Right Engine Thrust: %i [%%]' % int(Tlog[i][2]/max_thrust*100), (50, 170), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Left Engine Gimbal Angle: %i [Degrees]' % int(-alphalog[i]*180/np.pi), (50, 190), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Right Engine Gimbal Angle: %i [Degrees]' % int(-betalog[i]*180/np.pi), (50, 210), font, fontScale, color, thickness, cv2.LINE_AA)
 
     video.write(image)
 

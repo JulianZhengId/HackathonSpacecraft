@@ -358,14 +358,6 @@ class SpacecraftEnv(gym.Env):
         #print(self.rocket_position)
         #print(self.rocket_velocity)
         
-        self.thrust_center += self.thrust_rate * action[0] * self.h
-        self.thrust_right += self.thrust_rate * action[1] * self.h
-        self.thrust_left += self.thrust_rate * action[2] * self.h
-        self.thrust_history.append((self.thrust_left, self.thrust_center, self.thrust_right))
-        self.alpha += self.alphaBetaRate * action[3] * self.h
-        self.beta += self.alphaBetaRate * action[4] * self.h
-                
-        self.angle_history.append((self.rocket_angle, self.alpha, self.beta))
         #RENDERING
         #cv2.imshow('Spacecraft Env', self.img)
         #cv2.waitKey(1)
@@ -375,36 +367,100 @@ class SpacecraftEnv(gym.Env):
         
         #REWARD and TERMINATION
         reward = 0
+        k_1 = 100
+        k_2 = 100
+        k_3 = 100
+        k_4 = 0
+        k_5 = 100000
+        k_6 = 100000
+        k_7 = 100000
+        k_8 = 100000
+        k_9 = 100000
+        k_10 = 10000
         ### 1
         distance_to_landing_pad = np.linalg.norm(np.array(self.rocket_position) - np.array(self.pad_position))
-        reward -= distance_to_landing_pad * 10
-        
+        reward -= distance_to_landing_pad * k_1
         ### 2
-        epsilon = 0.005
-        y_com = self.b * np.cos(self.rocket_angle) + abs(self.a * np.sin(self.rocket_angle))
-        if (abs(y_com - self.rocket_position[1]) <= epsilon):
-            self.terminated = True
-            print("#2: " + str(self.rocket_position[0]) + " "+ str(self.rocket_position[1]))
-            self.reason = "Rocket has landed"
-            if (self.rocket_velocity[1] <= 1):
-                
-                reward += 10000 * (1.001 - self.rocket_velocity[1])    
-            else:
-                reward -= 10000
-
+        velocity = self.rocket_velocity[1] * self.rocket_velocity[1] + self.rocket_velocity[0]  * self.rocket_velocity[0]
+        velocity = velocity**0.5
+        reward -= velocity * k_2
         ### 3
-        if (self.rocket_angle < math.radians(-30) or self.rocket_angle > math.radians(30)):
-            reward -= (abs(self.rocket_angle) - math.radians(30))
+        reward -= abs(self.rocket_angle) * k_3
         ### 4
-        if (self.rocket_position[1] < self.pad_position[1]):
-            reward -= 25
-            
+        reward -= abs(self.rocket_angular_vel) * k_4
+
+        self.thrust_center += self.thrust_rate * action[0] * self.h
+        self.thrust_right += self.thrust_rate * action[1] * self.h
+        self.thrust_left += self.thrust_rate * action[2] * self.h
+        self.thrust_history.append((self.thrust_left, self.thrust_center, self.thrust_right))
+        self.alpha += self.alphaBetaRate * action[3] * self.h
+        self.beta += self.alphaBetaRate * action[4] * self.h
+        self.angle_history.append((self.rocket_angle, self.alpha, self.beta))
         ### 5
-        if (out_of_frame(self.rocket_position)):
-            print("#5: " + str(self.rocket_position[0]) + " " + str(self.rocket_position[1]))
-            self.reason = "out of frame"
-            reward -= 10000
+        if self.thrust_left > max_thrust:
+            self.thrust_left = max_thrust
+            reward -= k_5
+        if self.thrust_center > max_thrust:
+            self.thrust_center = max_thrust
+            reward -= k_6
+        if self.thrust_right > max_thrust:
+            self.thrust_right = max_thrust
+            reward -= k_7
+        if self.thrust_left < 0:
+            self.thrust_left = 0
+            reward -= k_5
+        if self.thrust_center < 0:
+            self.thrust_center = 0
+            reward -= k_6
+        if self.thrust_right < 0:
+            self.thrust_right = 0
+            reward -= k_7
+        ### 6
+        max_gimbal = math.radians(60)
+        if self.alpha > max_gimbal:
+            self.alpha = max_gimbal
+            reward -= k_8
+        if self.beta > max_gimbal:
+            self.beta = max_gimbal
+            reward -= k_9
+        if self.alpha < -max_gimbal:
+            self.alpha = -max_gimbal
+            reward -= k_8
+        if self.beta < -max_gimbal:
+            self.beta = -max_gimbal
+            reward -= k_9
+        ### 7
+        eps = 0.05
+        if self.rocket_position[1] <= math.sqrt(a**2+b**2):
+            if abs(self.rocket_position[0]) <= eps:
+                reward += k_10
             self.terminated = True
+        #### 2
+#        epsilon = 0.005
+#        y_com = self.b * np.cos(self.rocket_angle) + abs(self.a * np.sin(self.rocket_angle))
+#        if (abs(y_com - self.rocket_position[1]) <= epsilon):
+#            self.terminated = True
+#            print("#2: " + str(self.rocket_position[0]) + " "+ str(self.rocket_position[1]))
+#            self.reason = "Rocket has landed"
+#            if (self.rocket_velocity[1] <= 1):
+#                
+#                reward += 10000 * (1.001 - self.rocket_velocity[1])    
+#            else:
+#                reward -= 10000
+#
+#        ### 3
+#        if (self.rocket_angle < math.radians(-30) or self.rocket_angle > math.radians(30)):
+#            reward -= (abs(self.rocket_angle) - math.radians(30))
+#        ### 4
+#        if (self.rocket_position[1] < self.pad_position[1]):
+#            reward -= 25
+#            
+        ### 5
+#        if (out_of_frame(self.rocket_position)):
+#            print("#5: " + str(self.rocket_position[0]) + " " + str(self.rocket_position[1]))
+#            self.reason = "out of frame"
+#            reward -= 10000
+#            self.terminated = True
         info = {}     
         #update observation
         rocket_position_x = self.rocket_position[0]
@@ -516,7 +572,7 @@ env.close()
 
 
 model = PPO("MlpPolicy", env, verbose=1)
-model.learn(total_timesteps=int(5000), progress_bar=True)
+model.learn(total_timesteps=int(50000), progress_bar=True)
 model.save("PPO-Spaceraft_1")
 
 

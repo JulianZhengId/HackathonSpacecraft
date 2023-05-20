@@ -336,16 +336,17 @@ class SpacecraftEnv(gym.Env):
         
         #REWARD and TERMINATION
         reward = 0
-        k_1 = 10
+        k_1 = 5
         k_2 = 100
-        k_3 = 10
+        k_3 = 5
         k_4 = 0
-        k_5 = 100
-        k_6 = 100
-        k_7 = 100
-        k_8 = 100
-        k_9 = 100
-        k_10 = 100
+        k_5 = 5
+        k_6 = 5
+        k_7 = 5
+        k_8 = 5
+        k_9 = 5
+        k_10 = 10000
+        k_11 = 5
         ### 1
         distance_to_landing_pad = np.linalg.norm(np.array(self.rocket_position) - np.array(self.pad_position))
         reward -= distance_to_landing_pad * k_1
@@ -359,9 +360,12 @@ class SpacecraftEnv(gym.Env):
         reward -= abs(self.rocket_angular_vel) * k_4
 
         self.thrust_center += self.thrust_rate * action[0] * self.h
-        self.thrust_right += self.thrust_rate * action[1] * self.h
-        self.thrust_left += self.thrust_rate * action[2] * self.h
-        self.thrust_history.append((self.thrust_left, self.thrust_center, self.thrust_right))
+        action1 = (action[1] - self.rocket_angle/(math.pi/2))/2
+        action2 = (action[2] + self.rocket_angle/(math.pi/2))/2
+        self.thrust_right += self.thrust_rate * action1 * self.h
+        self.thrust_left += self.thrust_rate * action2 * self.h
+        #self.thrust_right += self.thrust_rate * action[1] * self.h
+        #self.thrust_left += self.thrust_rate * action[2] * self.h
         self.alpha += self.alphaBetaRate * action[3] * self.h
         self.beta += self.alphaBetaRate * action[4] * self.h
         alphalog.append(self.alpha)
@@ -404,8 +408,7 @@ class SpacecraftEnv(gym.Env):
         ### 7
         eps = 0.05
         if self.rocket_position[1] <= math.sqrt(a**2+b**2):
-            if abs(self.rocket_position[0]) <= eps:
-                reward += k_10
+            reward += k_10 * np.exp(-k_11 * abs(self.rocket_position[0]))
             self.terminated = True
 
         info = {}     
@@ -422,6 +425,7 @@ class SpacecraftEnv(gym.Env):
         alpha = self.alpha
         beta = self.beta
         
+        reward /= 20
         temp = reward
         reward -= self.prev_reward
         self.prev_reward = temp
@@ -454,16 +458,8 @@ class SpacecraftEnv(gym.Env):
         self.terminated = False
         self.reason = ""
         info = {}
-        self.reward = 0
+        self.prev_reward = 0
         self.timer = 0
-
-        # position history
-        self.pos_history = [] # tuple of x,y
-        self.angle_history = [] # tuple of theta, alpha, beta
-        self.velocity_history = [] # tuple of xdot, ydot
-        self.thrust_history = [] # tuple of left, center, right engine
-        self.angular_history = [] # thetadots
-
 
         rocket_position_x = self.rocket_position[0]
         rocket_position_y = self.rocket_position[1]

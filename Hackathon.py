@@ -268,22 +268,51 @@ class SpacecraftEnv(gym.Env):
         
         # thrust engines (3)
         # control alpha beta
-        self.action_space = spaces.Box(-1, 1, (5,), dtype='int8')
+        self.action_space = spaces.Box(-1, 1, (5,), dtype='float32')
         
+#        low = np.array(
+#            [
+#                # these are bounds for position
+#                # realistically the environment should have ended
+#                # long before we reach more than 50% outside
+#                -1.5,
+#                -1.5,
+#                # velocity bounds is 5x rated speed
+#                -5.0,
+#                -5.0,
+#                -math.pi,
+#                -5.0,
+#                -2.0,
+#                -2.0,
+#            ]
+#        ).astype(np.float32)
+#        high = np.array(
+#            [
+#                # these are bounds for position
+#                # realistically the environment should have ended
+#                # long before we reach more than 50% outside
+#                1.5,
+#                1.5,
+#                # velocity bounds is 5x rated speed
+#                5.0,
+#                5.0,
+#                math.pi,
+#                5.0,
+#                2.0,
+#                2.0,
+#            ]
+#        ).astype(np.float32)
         low = np.array(
             [
-                # these are bounds for position
-                # realistically the environment should have ended
-                # long before we reach more than 50% outside
-                -1.5,
-                -1.5,
+                -500,
+                -500,
                 # velocity bounds is 5x rated speed
-                -5.0,
-                -5.0,
+                -1000,
+                -1000,
                 -math.pi,
-                -5.0,
-                -2.0,
-                -2.0,
+                -60.0,
+                math.radians(-60),
+                math.radians(-60),
             ]
         ).astype(np.float32)
         high = np.array(
@@ -291,18 +320,17 @@ class SpacecraftEnv(gym.Env):
                 # these are bounds for position
                 # realistically the environment should have ended
                 # long before we reach more than 50% outside
-                1.5,
-                1.5,
+                2880,
+                1920,
                 # velocity bounds is 5x rated speed
-                5.0,
-                5.0,
+                1000,
+                1000,
                 math.pi,
-                5.0,
-                2.0,
-                2.0,
+                60.0,
+                math.radians(60),
+                math.radians(60),
             ]
-        ).astype(np.float32)
-        
+        ).astype(np.float32) 
         self.observation_space = spaces.Box(low, high)
         self.reason = ""
 
@@ -377,7 +405,6 @@ class SpacecraftEnv(gym.Env):
             self.reason = "out of frame"
             reward -= 10000
             self.terminated = True
-            
         info = {}     
         #update observation
         rocket_position_x = self.rocket_position[0]
@@ -510,8 +537,8 @@ n_timesteps = np.shape(env.pos_history)[0]
 #resolution
 image_height = 1080
 image_width = 1920
-px = np.array([i[0] for i in env.pos_history])
-py = np.array([i[1] for i in env.pos_history])
+px = np.array([i[0] for i in env.pos_history] + [env.pos_history[-1][0]]*int(FPS))
+py = np.array([i[1] for i in env.pos_history] + [env.pos_history[-1][1]]*int(FPS))
 scaled_x, scaled_y = scaling(px, py, image_width, image_height)
 
 flight_path = np.array([scaled_x, scaled_y]).T
@@ -524,7 +551,12 @@ left_fin_polygon[:,0] = left_fin_polygon[:,0] * -1
 
 
 video = cv2.VideoWriter(safe_name,cv2.VideoWriter_fourcc('m','p','4','v'), FPS, (image_width,image_height))
-for i in range(n_timesteps-1):
+env.angle_history += [env.angle_history[-1]]*int(FPS)
+env.thrust_history += [env.thrust_history[-1]]*int(FPS)
+env.pos_history += [env.pos_history[-1]]*int(FPS)
+env.angular_history += [env.angular_history[-1]]*int(FPS)
+env.velocity_history += [env.velocity_history[-1]]*int(FPS)
+for i in range(len(env.pos_history)):
     # image = 255 * np.ones((image_height,image_width,3), np.uint8)
     # replace with cv2.imread(imageFile)
     image = cv2.imread('background.png')
@@ -556,9 +588,9 @@ for i in range(n_timesteps-1):
     image = cv2.putText(image, 'Right Engine Thrust: %i [%%]' % int(env.thrust_history[i][2]/max_thrust*100), (50, 170), font, fontScale, color, thickness, cv2.LINE_AA)
     image = cv2.putText(image, 'Left Engine Gimbal Angle: %i [Degrees]' % int(-env.angle_history[i][1]*180/np.pi), (50, 190), font, fontScale, color, thickness, cv2.LINE_AA)
     image = cv2.putText(image, 'Right Engine Gimbal Angle: %i [Degrees]' % int(-env.angle_history[i][2]*180/np.pi), (50, 210), font, fontScale, color, thickness, cv2.LINE_AA)
-    if env.terminated:
-        image = cv2.putText(image, f"Simulation is terminated with reason: {env.reason}", (50, 230), font, fontScale, color, thickness, cv.LINE_AA)
-
+    #if env.terminated:
+    #reason = env.reason if env.reason != "" else "Out of time"
+    #image = cv2.putText(image, f"Simulation is terminated with reason: {reason}", (50, 230), font, fontScale, color, thickness, cv2.LINE_AA)
     video.write(image)
 video.release()
 

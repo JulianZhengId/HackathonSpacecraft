@@ -3,7 +3,7 @@
 
 # # Import Libraries
 
-# In[1]:
+# In[34]:
 
 
 import numpy as np
@@ -14,7 +14,7 @@ import math
 import matplotlib.pyplot as plt
 
 
-# In[2]:
+# In[35]:
 
 
 import gym
@@ -25,7 +25,7 @@ from gym import spaces
 
 # # Helper Functions
 
-# In[25]:
+# In[36]:
 
 
 #functionss
@@ -34,7 +34,7 @@ def collision_landing_pad(landing_pad_position, score):
     return terminate
 
 def out_of_frame(rocket_position):
-    if rocket_position[0]>=1920 or rocket_position[0]<0 or rocket_position[1]>=1080 or rocket_position[1]<0 :
+    if rocket_position[0]>=1920 or rocket_position[0]<-500 or rocket_position[1]>=1080 or rocket_position[1]<-500 :
         return 1
     else:
         return 0
@@ -135,18 +135,20 @@ def scaling(pos_x, pos_y, width, height, uncovered=0.1):
     dist_y = max_pos_y - min_pos_y
     
     if dist_x>=dist_y:
-        max_dist = dist_x + 1
+        max_dist = dist_x
     else:
-        max_dist = dist_y + 1
+        max_dist = dist_y
     
     scaled_x = used_width/(max_dist)*pos_x
-    scaled_x = scaled_x - (min(scaled_x) - int(uncovered*width))
+    xoffset = min(scaled_x) - int(uncovered*width)
+    scaled_x = scaled_x - xoffset
     
     scaled_y = used_height/(max_dist)*pos_y
-    scaled_y = scaled_y - (min(scaled_y) - int(uncovered*width))
+    yoffset = min(scaled_y) - int(uncovered*width)
+    scaled_y = scaled_y - yoffset
     scaled_y = height - scaled_y
                            
-    return scaled_x.astype(np.int32), scaled_y.astype(np.int32)
+    return scaled_x.astype(np.int32), scaled_y.astype(np.int32), xoffset, yoffset
 
 def rotation(phi, points):    
     x_rotate = points[:,0] * np.cos(phi) - points[:,1] * np.sin(phi)
@@ -157,7 +159,7 @@ def rotation(phi, points):
 
 # # Custom Environment
 
-# In[26]:
+# In[46]:
 
 
 g = 1.625                   # m/s^2
@@ -186,16 +188,18 @@ time = np.linspace(t0, tn, int((tn-t0)/h)+1)
 states = np.zeros((6, len(time)))
 
 # data coming from 2D_flight_dynamic_propagation.py
-pos_x = states[0,:-1]#.astype(np.int32)
-pos_y = states[1,:-1]#.astype(np.int32)
+pos_x = []#states[0,:-1]#.astype(np.int32)
+pos_y = []#states[1,:-1]#.astype(np.int32)
 
-phi = -states[2,:-1] # negative sign, because rotation matrix is defined incorrelty with regard to mathematical positive rotation
+phi = []#-states[2,:-1] # negative sign, because rotation matrix is defined incorrelty with regard to mathematical positive rotation
 
-vel_x = states[3,:-1]
-vel_y = states[4,:-1]
+vel_x = []#states[3,:-1]
+vel_y = []#states[4,:-1]
 
 alpha = 0
 beta = 0
+
+timer = 0
 
 max_thrust = 1500
 
@@ -203,8 +207,7 @@ T_l = 0
 T_r = 0
 T_c = 1625 * 1.2
 
-
-# In[68]:
+hello = []
 
 
 class SpacecraftEnv(gym.Env):
@@ -255,53 +258,17 @@ class SpacecraftEnv(gym.Env):
         self.a = a
         self.b = b
         self.h = h
-
-        # position history
-        self.pos_history = [] # tuple of x,y
-        self.angle_history = [] # tuple of theta, alpha, beta
-        self.velocity_history = [] # tuple of xdot, ydot
-        self.thrust_history = [] # tuple of left, center, right engine
-        self.angular_history = [] # thetadots
-
         
+        self.timer = 0
+        self.prev_reward = 0
         self.linear = linear
+        
+        self.counter = 0
         
         # thrust engines (3)
         # control alpha beta
         self.action_space = spaces.Box(-1, 1, (5,), dtype='float32')
         
-#        low = np.array(
-#            [
-#                # these are bounds for position
-#                # realistically the environment should have ended
-#                # long before we reach more than 50% outside
-#                -1.5,
-#                -1.5,
-#                # velocity bounds is 5x rated speed
-#                -5.0,
-#                -5.0,
-#                -math.pi,
-#                -5.0,
-#                -2.0,
-#                -2.0,
-#            ]
-#        ).astype(np.float32)
-#        high = np.array(
-#            [
-#                # these are bounds for position
-#                # realistically the environment should have ended
-#                # long before we reach more than 50% outside
-#                1.5,
-#                1.5,
-#                # velocity bounds is 5x rated speed
-#                5.0,
-#                5.0,
-#                math.pi,
-#                5.0,
-#                2.0,
-#                2.0,
-#            ]
-#        ).astype(np.float32)
         low = np.array(
             [
                 -500,
@@ -332,9 +299,9 @@ class SpacecraftEnv(gym.Env):
             ]
         ).astype(np.float32) 
         self.observation_space = spaces.Box(low, high)
-        self.reason = ""
 
     def step(self, action):
+        
         #CALCULATION
         # update via newton and runga kutta
         args = [self.gravity, self.mass, self.moment_inertia, self.a, self.b, self.alpha, self.beta, self.thrust_left, self.thrust_center, self.thrust_right]
@@ -348,35 +315,32 @@ class SpacecraftEnv(gym.Env):
 
         self.rocket_position[0] = coor_sets[0]
         self.rocket_position[1] = coor_sets[1]
-        self.pos_history.append((self.rocket_position[0],self.rocket_position[1]))
+        
+        pos_x.append(self.rocket_position[0])
+        pos_y.append(self.rocket_position[1])
+        
         self.rocket_angle = coor_sets[2]
         self.rocket_velocity[0] = coor_sets[3]
         self.rocket_velocity[1] = coor_sets[4]
-        self.velocity_history.append((self.rocket_velocity[0], self.rocket_velocity[1]))
-        self.rocket_angular_vel = coor_sets[5]
-        self.angular_history.append(self.rocket_angular_vel)
-        #print(self.rocket_position)
-        #print(self.rocket_velocity)
         
-        #RENDERING
-        #cv2.imshow('Spacecraft Env', self.img)
-        #cv2.waitKey(1)
-        #self.img = np.zeros((500, 500, 3), dtype='uint8')
-        #Display Rocket
-        #Display Landing Pad
+        phi.append(-self.rocket_angle)
+        vel_x.append(self.rocket_velocity[0])
+        vel_y.append(self.rocket_velocity[1])
+
+        self.rocket_angular_vel = coor_sets[5]
         
         #REWARD and TERMINATION
         reward = 0
-        k_1 = 100
+        k_1 = 10
         k_2 = 100
-        k_3 = 100
+        k_3 = 10
         k_4 = 0
-        k_5 = 100000
-        k_6 = 100000
-        k_7 = 100000
-        k_8 = 100000
-        k_9 = 100000
-        k_10 = 10000
+        k_5 = 100
+        k_6 = 100
+        k_7 = 100
+        k_8 = 100
+        k_9 = 100
+        k_10 = 100
         ### 1
         distance_to_landing_pad = np.linalg.norm(np.array(self.rocket_position) - np.array(self.pad_position))
         reward -= distance_to_landing_pad * k_1
@@ -395,7 +359,7 @@ class SpacecraftEnv(gym.Env):
         self.thrust_history.append((self.thrust_left, self.thrust_center, self.thrust_right))
         self.alpha += self.alphaBetaRate * action[3] * self.h
         self.beta += self.alphaBetaRate * action[4] * self.h
-        self.angle_history.append((self.rocket_angle, self.alpha, self.beta))
+
         ### 5
         if self.thrust_left > max_thrust:
             self.thrust_left = max_thrust
@@ -435,32 +399,7 @@ class SpacecraftEnv(gym.Env):
             if abs(self.rocket_position[0]) <= eps:
                 reward += k_10
             self.terminated = True
-        #### 2
-#        epsilon = 0.005
-#        y_com = self.b * np.cos(self.rocket_angle) + abs(self.a * np.sin(self.rocket_angle))
-#        if (abs(y_com - self.rocket_position[1]) <= epsilon):
-#            self.terminated = True
-#            print("#2: " + str(self.rocket_position[0]) + " "+ str(self.rocket_position[1]))
-#            self.reason = "Rocket has landed"
-#            if (self.rocket_velocity[1] <= 1):
-#                
-#                reward += 10000 * (1.001 - self.rocket_velocity[1])    
-#            else:
-#                reward -= 10000
-#
-#        ### 3
-#        if (self.rocket_angle < math.radians(-30) or self.rocket_angle > math.radians(30)):
-#            reward -= (abs(self.rocket_angle) - math.radians(30))
-#        ### 4
-#        if (self.rocket_position[1] < self.pad_position[1]):
-#            reward -= 25
-#            
-        ### 5
-#        if (out_of_frame(self.rocket_position)):
-#            print("#5: " + str(self.rocket_position[0]) + " " + str(self.rocket_position[1]))
-#            self.reason = "out of frame"
-#            reward -= 10000
-#            self.terminated = True
+
         info = {}     
         #update observation
         rocket_position_x = self.rocket_position[0]
@@ -474,6 +413,18 @@ class SpacecraftEnv(gym.Env):
         
         alpha = self.alpha
         beta = self.beta
+        
+        temp = reward
+        reward -= self.prev_reward
+        self.prev_reward = temp
+        
+        self.counter += 1
+        hello.append(self.counter)
+        
+        self.timer += h
+        #if (self.timer >= 10):
+        #    self.terminated = True
+            
 
         observation = [rocket_position_x, rocket_position_y, rocket_velocity_x, rocket_velocity_y, rocket_angle, rocket_angular_vel, alpha, beta]
         return observation, reward, self.terminated, info
@@ -496,6 +447,7 @@ class SpacecraftEnv(gym.Env):
         self.reason = ""
         info = {}
         self.reward = 0
+        self.timer = 0
 
         # position history
         self.pos_history = [] # tuple of x,y
@@ -516,10 +468,18 @@ class SpacecraftEnv(gym.Env):
         angular_vel = self.rocket_angular_vel
         angular_accel = self.rocket_angular_accel
                 
-        #thrust_left = self.thrust_left
-        #thrust_right = self.thrust_right
-        #thrust_center = self.thrust_center
+        pos_x = []
+        pos_y = []
         
+        phi = [] # negative sign, because rotation matrix is defined incorrelty with regard to mathematical positive rotation
+        
+        vel_x = []
+        vel_y = []
+        
+        hello = []
+        
+        self.counter  = 0
+                
         alpha = self.alpha
         beta = self.beta
 
@@ -536,7 +496,7 @@ class SpacecraftEnv(gym.Env):
 
 # # Model
 
-# In[69]:
+# In[47]:
 
 
 env = SpacecraftEnv(
@@ -549,10 +509,10 @@ env = SpacecraftEnv(
         h = h)
 
 
-# In[70]:
+# In[48]:
 
 
-episodes = 5
+episodes = 1
 for episode in range(1, episodes + 1):
     observation = env.reset()
     done = False
@@ -568,18 +528,34 @@ for episode in range(1, episodes + 1):
 env.close()
 
 
-# In[47]:
+# In[49]:
 
 
-model = PPO("MlpPolicy", env, verbose=1)
-model.learn(total_timesteps=int(50000), progress_bar=True)
-model.save("PPO-Spaceraft_1")
+#log_path = "logging"
+#model = PPO("MlpPolicy", env, verbose=1)
+#model.learn(total_timesteps=int(1), progress_bar=True)
+#model.save("PPO-Spaceraft_1")
 
 
 # # Visualization
 
-# In[ ]:
+# In[54]:
 
+
+image_height = 1080
+image_width = 1920
+
+for i in range(30):
+    pos_x[-i] = 0
+    pos_y[-i] = 0
+pos_x = np.array(pos_x)
+pos_y = np.array(pos_y)
+phi = np.array(phi)
+vel_x = np.array(vel_x)
+vel_y = np.array(vel_y)
+
+scaled_x, scaled_y, xoff, yoff = scaling(pos_x, pos_y, image_width, image_height, uncovered = 0.1)
+n_timesteps = np.shape(pos_x)[0]
 
 FPS = 1/h      
 safe_name= 'test.mp4'
@@ -588,106 +564,107 @@ fontScale = 0.5
 color = (255, 255, 255)
 thickness = 1
 
-n_timesteps = np.shape(env.pos_history)[0]
 
-#resolution
-image_height = 1080
-image_width = 1920
-px = np.array([i[0] for i in env.pos_history] + [env.pos_history[-1][0]]*int(FPS))
-py = np.array([i[1] for i in env.pos_history] + [env.pos_history[-1][1]]*int(FPS))
-scaled_x, scaled_y = scaling(px, py, image_width, image_height)
+
 
 flight_path = np.array([scaled_x, scaled_y]).T
-scaling = 10
 
-lander_polygon = np.array([[-scaling, 2*scaling], [scaling, 2*scaling], [scaling, -2*scaling], [0, -3*scaling], [-scaling, -2*scaling]])
-right_fin_polygon = np.array([[1.3*scaling, 2*scaling], [2*scaling, 3*scaling], [2*scaling, 1*scaling], [1.3*scaling, 0], [1.3*scaling, 2*scaling]])
+scaler = 10
+
+
+
+lander_polygon = np.array([[-scaler, 2*scaler], [scaler, 2*scaler], [scaler, -2*scaler], [0, -3*scaler], [-scaler, -2*scaler]])
+right_fin_polygon = np.array([[1.3*scaler, 2*scaler], [2*scaler, 3*scaler], [2*scaler, 1*scaler], [1.3*scaler, 0], [1.3*scaler, 2*scaler]])
 left_fin_polygon = np.copy(right_fin_polygon)
 left_fin_polygon[:,0] = left_fin_polygon[:,0] * -1
-
-
+xoff = int(xoff)
+yoff = int(yoff)
+print(xoff,yoff)
 video = cv2.VideoWriter(safe_name,cv2.VideoWriter_fourcc('m','p','4','v'), FPS, (image_width,image_height))
-env.angle_history += [env.angle_history[-1]]*int(FPS)
-env.thrust_history += [env.thrust_history[-1]]*int(FPS)
-env.pos_history += [env.pos_history[-1]]*int(FPS)
-env.angular_history += [env.angular_history[-1]]*int(FPS)
-env.velocity_history += [env.velocity_history[-1]]*int(FPS)
-for i in range(len(env.pos_history)):
+for i in range(n_timesteps-1):
     # image = 255 * np.ones((image_height,image_width,3), np.uint8)
     # replace with cv2.imread(imageFile)
     image = cv2.imread('background.png')
-
+    
+    
     # image = cv2.polylines(image, [flight_path.reshape(-1,1,2)], False, (255,255,255), 1, cv2.LINE_AA)
     
-    image = cv2.fillPoly(image, [(rotation(env.angle_history[i][0], lander_polygon)+flight_path[i,:]).reshape(-1,1,2)], (208,193,155))
-    image = cv2.fillPoly(image, [(rotation(env.angle_history[i][0], right_fin_polygon)+flight_path[i,:]).reshape(-1,1,2)], (49,44,203))
-    image = cv2.fillPoly(image, [(rotation(env.angle_history[i][0], left_fin_polygon)+flight_path[i,:]).reshape(-1,1,2)], (49,44,203))
+    image = cv2.fillPoly(image, [(rotation(phi[i], lander_polygon)+flight_path[i,:]).reshape(-1,1,2)], (208,193,155))
+    image = cv2.fillPoly(image, [(rotation(phi[i], right_fin_polygon)+flight_path[i,:]).reshape(-1,1,2)], (49,44,203))
+    image = cv2.fillPoly(image, [(rotation(phi[i], left_fin_polygon)+flight_path[i,:]).reshape(-1,1,2)], (49,44,203))
 
-    exhaust_polygon_left = np.array([[-9, 2*scaling], [-7, (2 + 3*env.thrust_history[i][0]/max_thrust)*scaling], [-5, 2*scaling]])
-    exhaust_polygon_right = np.array([[9, 2*scaling], [7, (2 + 3*env.thrust_history[i][2]/max_thrust)*scaling], [5, 2*scaling]])
-    exhaust_polygon_center = np.array([[2, 2*scaling], [0, (2 + 3*env.thrust_history[i][1]/max_thrust)*scaling], [-2, 2*scaling]])
-    
-    image = cv2.fillPoly(image, [(rotation(env.angle_history[i][0] + env.angle_history[i][1], exhaust_polygon_left)+flight_path[i,:]).reshape(-1,1,2)], (39,188,248))
-    image = cv2.fillPoly(image, [(rotation(env.angle_history[i][0], exhaust_polygon_center)+flight_path[i,:]).reshape(-1,1,2)], (39,188,248))
-    image = cv2.fillPoly(image, [(rotation(env.angle_history[i][0] + env.angle_history[i][2], exhaust_polygon_right)+flight_path[i,:]).reshape(-1,1,2)], (39,188,248))
-    
-    
-    image = cv2.polylines(image, [np.array([flight_path[-1,:] + np.array([35, 3*scaling]), flight_path[-1,:] + np.array([-35, 3*scaling])]).reshape(-1,1,2)], isClosed = False, color=(0,0.0), thickness = 5)
+    image = cv2.fillPoly(image, [(rotation(phi[i], left_fin_polygon)+flight_path[i,:]).reshape(-1,1,2)], (49,44,203))
 
+    exhaust_polygon_left = np.array([[-9, 2*scaler], [-7, (2 + 3*T_l/max_thrust)*scaler], [-5, 2*scaler]])
+    exhaust_polygon_right = np.array([[9, 2*scaler], [7, (2 + 3*T_r/max_thrust)*scaler], [5, 2*scaler]])
+    exhaust_polygon_center = np.array([[2, 2*scaler], [0, (2 + 3*T_c/max_thrust)*scaler], [-2, 2*scaler]])
+    
+    image = cv2.fillPoly(image, [(rotation(phi[i] + alpha, exhaust_polygon_left)+flight_path[i,:]).reshape(-1,1,2)], (39,188,248))
+    image = cv2.fillPoly(image, [(rotation(phi[i], exhaust_polygon_center)+flight_path[i,:]).reshape(-1,1,2)], (39,188,248))
+    image = cv2.fillPoly(image, [(rotation(phi[i] + beta, exhaust_polygon_right)+flight_path[i,:]).reshape(-1,1,2)], (39,188,248))
+    
+    image = cv2.polylines(image, [np.array([np.array([abs(xoff)-35, image_height - abs(yoff) + 3*scaler]), np.array([abs(xoff)+35, image_height - abs(yoff) + 3*scaler])]).reshape(-1,1,2)], isClosed = False, color=(255,0.0), thickness = 5)
+    #image = cv2.polylines(image, [np.array([np.array([0-35, 888 + 3*scaler]), np.array([0+35, 888 + 3*scaler])]).reshape(-1,1,2)], isClosed = False, color=(255,0.0), thickness = 5)
+    #image = cv2.polylines(image, [np.array([flight_path[-1,:] + np.array([35, 3*scaler]), flight_path[-1,:] + np.array([-35, 3*scaler])]).reshape(-1,1,2)], isClosed = False, color=(0,0.0), thickness = 5)
 
-    image = cv2.putText(image, 'Horizontal Position: %i [m]' % int(env.pos_history[i][0]), (50, 50), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Vertical Position: %i [m]' % int(env.pos_history[i][1]), (50, 70), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Horizontal Velocity: %i [m/s]' % int(env.velocity_history[i][0]), (50, 90), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Vertical Velocity: %i [m/s]' % int(env.velocity_history[i][1]), (50, 110), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Left Engine Thrust: %i [%%]' % int(env.thrust_history[i][0]/max_thrust*100), (50, 130), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Center Engine Thrust: %i [%%]' % int(env.thrust_history[i][1]/max_thrust*100), (50, 150), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Right Engine Thrust: %i [%%]' % int(env.thrust_history[i][2]/max_thrust*100), (50, 170), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Left Engine Gimbal Angle: %i [Degrees]' % int(-env.angle_history[i][1]*180/np.pi), (50, 190), font, fontScale, color, thickness, cv2.LINE_AA)
-    image = cv2.putText(image, 'Right Engine Gimbal Angle: %i [Degrees]' % int(-env.angle_history[i][2]*180/np.pi), (50, 210), font, fontScale, color, thickness, cv2.LINE_AA)
-    #if env.terminated:
-    #reason = env.reason if env.reason != "" else "Out of time"
-    #image = cv2.putText(image, f"Simulation is terminated with reason: {reason}", (50, 230), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Horizontal Position: %i [m]' % int(pos_x[i]), (50, 50), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Vertical Position: %i [m]' % int(pos_y[i]), (50, 70), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Horizontal Velocity: %i [m/s]' % int(vel_x[i]), (50, 90), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Vertical Velocity: %i [m/s]' % int(vel_y[i]), (50, 110), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Left Engine Thrust: %i [%%]' % int(T_l/max_thrust*100), (50, 130), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Center Engine Thrust: %i [%%]' % int(T_c/max_thrust*100), (50, 150), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Right Engine Thrust: %i [%%]' % int(T_r/max_thrust*100), (50, 170), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Left Engine Gimbal Angle: %i [Degrees]' % int(-alpha*180/np.pi), (50, 190), font, fontScale, color, thickness, cv2.LINE_AA)
+    image = cv2.putText(image, 'Right Engine Gimbal Angle: %i [Degrees]' % int(-beta*180/np.pi), (50, 210), font, fontScale, color, thickness, cv2.LINE_AA)
+
     video.write(image)
+
 video.release()
 
 
 # # Plotting
 
-# In[ ]:
+# In[33]:
+
 
 plt.figure(figsize=(24,5))
 plt.subplot(141)
-plt.plot(time[:len(env.pos_history)], px, label='Position x')
-plt.plot(time[:len(env.pos_history)], py, label='Position y')
+plt.plot(hello[:], pos_x, label='Position x')
+plt.plot(hello[:], pos_y, label='Position y')
 plt.xlabel('Time [s]')
 plt.ylabel('Position [m]')
 plt.legend()
 plt.grid()
-angle = np.array([i[0] for i in env.angle_history])
+
 plt.subplot(142)
-plt.plot(time[:len(env.angle_history)], angle*180/np.pi, label='Rotation phi')
+plt.plot(hello[:], phi, label='Rotation phi')
 plt.xlabel('Time [s]')
 plt.ylabel('Angle [°]')
 plt.legend()
 plt.grid()
-velo_x = [i[0] for i in env.velocity_history]
-velo_y = [i[1] for i in env.velocity_history]
+
 plt.subplot(143)
-plt.plot(time[:len(env.velocity_history)], velo_x, label='Velocity x')
-plt.plot(time[:len(env.velocity_history)], velo_y, label='Velocity y')
+plt.plot(hello[:], vel_x, label='Velocity x')
+plt.plot(hello[:], vel_y, label='Velocity y')
 plt.xlabel('Time [s]')
 plt.ylabel('Velocity [m/s]')
 plt.legend()
 plt.grid()
 
-plt.subplot(144)
-plt.plot(time[:len(env.angular_history)], np.array(env.angular_history)*180/np.pi, label='Velocity phi')
-plt.xlabel('Time [s]')
-plt.ylabel('Velocity [°/s]')
-plt.legend()
-plt.grid()
+#plt.subplot(144)
+#plt.plot(time[:-1], states[5,:-1]*180/np.pi, label='Velocity phi')
+#plt.xlabel('Time [s]')
+#plt.ylabel('Velocity [°/s]')
+#plt.legend()
+#plt.grid()
 
 plt.show()
+
+
+# In[ ]:
+
+
+
 
 
 # In[ ]:

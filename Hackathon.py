@@ -29,6 +29,12 @@ from gym import spaces
 
 
 #functionss
+def rng(center_only = True):
+    time_set_fail = random.randint(5,295)
+    engine_index_fail = random.randint(0,2)
+    if center_only:
+        engine_index_fail = 1
+    return time_set_fail, engine_index_fail
 def collision_landing_pad(landing_pad_position, score):
     terminate = True
     return terminate
@@ -38,7 +44,85 @@ def out_of_frame(rocket_position):
         return 1
     else:
         return 0
+def new_ode(t, y, *args):
+    alpha = args[-5] # associated to left engine
+    beta = args[-4] # associated to right engine
+    T_l = args[-3] # thrust of left engine
+    T_c = args[-2] # thrust of center engine, no gimbal capabilities
+    T_r = args[-1] # thrust of right engine
+    g = args[0]
+    m = args[1]
+    Theta = args[2]
+    a = args[3]
+    h = args[4]
     
+    phi = y[2]
+    
+    vel_x = y[3]
+    vel_y = y[4]
+    vel_phi = y[5]
+    
+    pos_x_dot = vel_x
+    pos_y_dot = vel_y
+    phi_dot = vel_phi
+    
+    vel_x_dot = 1/m * (-np.sin(beta+phi)*T_r -np.sin(alpha+phi)*T_l - np.sin(phi)*T_c)
+    vel_y_dot = -g + 1/m * (np.cos(beta+phi)*T_r + np.cos(alpha+phi)*T_l + np.cos(phi)*T_c)
+    
+    dr = (a - h*np.tan(beta))*np.cos(beta)
+    dl = (a - h*np.tan(-alpha))*np.cos(-alpha)
+    
+    vel_phi_dot = 1/Theta * (T_r * dr - T_l * dl)
+    
+    return np.array([pos_x_dot, pos_y_dot, phi_dot, vel_x_dot, vel_y_dot, vel_phi_dot])
+
+
+def new_ode_linear(t, y, *args):
+    # linearisation around
+        # alpha = 0
+        # beta = 0
+    
+    # not "fully" linear since control input (T_r, T_c, T_l) is multiplied with TVC deflection angle (alpha, beta)
+    
+    alpha = args[-5] # deflection angle associated to left engine
+    beta = args[-4] # deflection angle associated to right engine
+    T_l = args[-3] # thrust of left engine
+    T_c = args[-2] # thrust of center engine, no gimbal capabilities
+    T_r = args[-1] # thrust of right engine
+    g = args[0]
+    m = args[1]
+    Theta = args[2]
+    a = args[3]
+    h = args[4]
+    
+    phi = y[2]
+    
+    vel_x = y[3]
+    vel_y = y[4]
+    vel_phi = y[5]
+    
+    pos_x_dot = vel_x
+    pos_y_dot = vel_y
+    phi_dot = vel_phi
+    
+    vel_x_dot = 1/m * (-(beta+phi)*T_r -(alpha+phi)*T_l -phi*T_c)
+    vel_y_dot = -g + 1/m * (T_c + T_r + T_l)
+    
+    dr = a - h*beta
+    dl = a - h*(-alpha)
+    
+    vel_phi_dot = 1/Theta * (T_r * dr - T_l * dl)
+    
+    return np.array([pos_x_dot, pos_y_dot, phi_dot, vel_x_dot, vel_y_dot, vel_phi_dot])
+
+def new_rk4_e(f, y, h, t, *args):
+    # runge kutte 4th order explicit
+    tk_05 = t + 0.5*h
+    yk_025 = y + 0.5 * h * f(t, y, *args)
+    yk_05 = y + 0.5 * h * f(tk_05, yk_025, *args)
+    yk_075 = y + h * f(tk_05, yk_05, *args)
+    
+    return y + h/6 * (f(t, y, *args) + 2 * f(tk_05, yk_025, *args) + 2 * f(tk_05, yk_05, *args) + f(t+h, yk_075, *args))   
 def ode(t, y, *args):
     alpha = args[-5] # associated to left engine
     beta = args[-4] # associated to right engine
@@ -232,6 +316,12 @@ class SpacecraftEnv(gym.Env):
         
         super(SpacecraftEnv, self).__init__()
         
+        self.t_fail, self.engine_index_fail = rng(False)
+        self.T_l_fail = 0
+        self.T_c_fail = 0
+        self.T_r_fail = 0
+        self.time_ctr = 0
+
         #rocket initial data
         self.gravity = gravity
         self.mass = mass
@@ -256,8 +346,8 @@ class SpacecraftEnv(gym.Env):
         self.alphaBetaRate = alphaBetaRate
         self.thrust_dynamic = 200
         
-        self.thrust_left = 0
-        self.thrust_right = 0
+        self.thrust_left = max_thrust/3
+        self.thrust_right = max_thrust/3
         self.thrust_center = mass * gravity * 1.2
         
         self.a = a
@@ -285,6 +375,9 @@ class SpacecraftEnv(gym.Env):
                 -60.0,
                 math.radians(-60),
                 math.radians(-60),
+                0,
+                0,
+                0,
             ]
         ).astype(np.float32)
         high = np.array(
@@ -301,12 +394,14 @@ class SpacecraftEnv(gym.Env):
                 60.0,
                 math.radians(60),
                 math.radians(60),
+                1,
+                1,
+                1,
             ]
         ).astype(np.float32) 
         self.observation_space = spaces.Box(low, high)
 
     def step(self, action):
-        
         #CALCULATION
         # update via newton and runga kutta
         args = [self.gravity, self.mass, self.moment_inertia, self.a, self.b, self.alpha, self.beta, self.thrust_left, self.thrust_center, self.thrust_right]
@@ -314,9 +409,9 @@ class SpacecraftEnv(gym.Env):
         t_rk = 0 #not so important, only for runga kutta formalism
 
         if self.linear:
-            coor_sets = rk4_e(ode_linear, coor_sets, self.h, t_rk, args)
+            coor_sets = rk4_e(ode_linear, coor_sets, self.h, t_rk, *args)
         else:
-            coor_sets = rk4_e(ode, coor_sets, self.h, t_rk, *args)
+            coor_sets = new_rk4_e(new_ode, coor_sets, self.h, t_rk, *args)
 
         self.rocket_position[0] = coor_sets[0]
         self.rocket_position[1] = coor_sets[1]
@@ -336,16 +431,18 @@ class SpacecraftEnv(gym.Env):
         
         #REWARD and TERMINATION
         reward = 0
-        k_1 = 10
+        k_1 = 5
         k_2 = 100
-        k_3 = 10
+        k_3 = 5
         k_4 = 0
-        k_5 = 100
-        k_6 = 100
-        k_7 = 100
-        k_8 = 100
-        k_9 = 100
-        k_10 = 100
+        k_5 = 5
+        k_6 = 5
+        k_7 = 5
+        k_8 = 5
+        k_9 = 5
+        k_10 = 10000
+        k_11 = 5
+        k_12 = 5
         ### 1
         distance_to_landing_pad = np.linalg.norm(np.array(self.rocket_position) - np.array(self.pad_position))
         reward -= distance_to_landing_pad * k_1
@@ -359,15 +456,28 @@ class SpacecraftEnv(gym.Env):
         reward -= abs(self.rocket_angular_vel) * k_4
 
         self.thrust_center += self.thrust_rate * action[0] * self.h
-        self.thrust_right += self.thrust_rate * action[1] * self.h
-        self.thrust_left += self.thrust_rate * action[2] * self.h
-        self.thrust_history.append((self.thrust_left, self.thrust_center, self.thrust_right))
+        action1 = (action[1] - self.rocket_angle/(math.pi/2))/2
+        action2 = (action[2] + self.rocket_angle/(math.pi/2))/2
+        self.thrust_right += self.thrust_rate * action1 * self.h
+        self.thrust_left += self.thrust_rate * action2 * self.h
+        #self.thrust_right += self.thrust_rate * action[1] * self.h
+        #self.thrust_left += self.thrust_rate * action[2] * self.h
         self.alpha += self.alphaBetaRate * action[3] * self.h
         self.beta += self.alphaBetaRate * action[4] * self.h
         alphalog.append(self.alpha)
         betalog.append(self.beta)
-        Tlog.append((self.thrust_left, self.thrust_center, self.thrust_right))
 
+        self.time_ctr += 1
+        if self.time_ctr >= self.t_fail:
+            if self.engine_index_fail == 0:
+                self.thrust_left = 0
+                self.T_l_fail = 1
+            elif self.engine_index_fail == 1:
+                self.thrust_center = 0
+                self.T_c_fail = 1
+            else:
+                self.thrust_right = 0
+                self.T_r_fail = 1
         ### 5
         if self.thrust_left > max_thrust:
             self.thrust_left = max_thrust
@@ -387,6 +497,7 @@ class SpacecraftEnv(gym.Env):
         if self.thrust_right < 0:
             self.thrust_right = 0
             reward -= k_7
+        Tlog.append((self.thrust_left, self.thrust_center, self.thrust_right))
         ### 6
         max_gimbal = math.radians(60)
         if self.alpha > max_gimbal:
@@ -402,10 +513,10 @@ class SpacecraftEnv(gym.Env):
             self.beta = -max_gimbal
             reward -= k_9
         ### 7
+        reward -= k_12 * self.rocket_angle * self.rocket_angular_vel
         eps = 0.05
         if self.rocket_position[1] <= math.sqrt(a**2+b**2):
-            if abs(self.rocket_position[0]) <= eps:
-                reward += k_10
+            reward += k_10 * np.exp(-k_11 * abs(self.rocket_position[0]))
             self.terminated = True
 
         info = {}     
@@ -422,6 +533,7 @@ class SpacecraftEnv(gym.Env):
         alpha = self.alpha
         beta = self.beta
         
+        reward /= 20
         temp = reward
         reward -= self.prev_reward
         self.prev_reward = temp
@@ -434,17 +546,20 @@ class SpacecraftEnv(gym.Env):
         #    self.terminated = True
             
 
-        observation = [rocket_position_x, rocket_position_y, rocket_velocity_x, rocket_velocity_y, rocket_angle, rocket_angular_vel, alpha, beta]
+        observation = [rocket_position_x, rocket_position_y, rocket_velocity_x, rocket_velocity_y, rocket_angle, rocket_angular_vel, alpha, beta, self.T_l_fail, self.T_c_fail, self.T_r_fail]
         return observation, reward, self.terminated, info
 
     def reset(self):
         self.img = np.zeros((500, 500, 3), dtype='uint8')
-
+        self.T_l_fail = 0
+        self.T_c_fail = 0
+        self.T_r_fail = 0
+        self.t_fail, self.engine_index_fail = rng(False)
+        self.time_ctr = 0
         #reset rocket data
         self.rocket_position = [250, 350] #vec2 position
         self.rocket_velocity = [-25, -25] #vec2 velocity
         self.rocket_accel = [0, 0]
-        
         self.rocket_angle = phi0 #float angle
         self.rocket_angular_vel = 0 #float angular velocity
         self.rocket_angular_accel = 0
@@ -454,16 +569,8 @@ class SpacecraftEnv(gym.Env):
         self.terminated = False
         self.reason = ""
         info = {}
-        self.reward = 0
+        self.prev_reward = 0
         self.timer = 0
-
-        # position history
-        self.pos_history = [] # tuple of x,y
-        self.angle_history = [] # tuple of theta, alpha, beta
-        self.velocity_history = [] # tuple of xdot, ydot
-        self.thrust_history = [] # tuple of left, center, right engine
-        self.angular_history = [] # thetadots
-
 
         rocket_position_x = self.rocket_position[0]
         rocket_position_y = self.rocket_position[1]
@@ -496,7 +603,7 @@ class SpacecraftEnv(gym.Env):
         alpha = self.alpha
         beta = self.beta
 
-        observation = [rocket_position_x, rocket_position_y, rocket_velocity_x, rocket_velocity_y, rocket_angle, angular_vel, alpha, beta]
+        observation = [rocket_position_x, rocket_position_y, rocket_velocity_x, rocket_velocity_y, rocket_angle, angular_vel, alpha, beta, self.T_l_fail, self.T_c_fail, self.T_r_fail]
         
         return observation
 
@@ -525,35 +632,48 @@ env = SpacecraftEnv(
 # In[48]:
 
 
-episodes = 1
-for episode in range(1, episodes + 1):
-    observation = env.reset()
-    done = False
-    total_reward = 0
-    
-    while not done:
-        random_action = env.action_space.sample()
-        observation, reward, done, info = env.step(random_action)
-        total_reward += reward
-        
-    print("episode {} with score: {}".format(episode, total_reward))
-    
-env.close()
+#episodes = 1
+#for episode in range(1, episodes + 1):
+#    observation = env.reset()
+#    done = False
+#    total_reward = 0
+#    
+#    while not done:
+#        random_action = env.action_space.sample()
+#        observation, reward, done, info = env.step(random_action)
+#        total_reward += reward
+#        
+#    print("episode {} with score: {}".format(episode, total_reward))
+#    
+#env.close()
 
 
 # In[49]:
 
 
-#log_path = "logging"
-#model = PPO("MlpPolicy", env, verbose=1)
-#model.learn(total_timesteps=int(1), progress_bar=True)
-#model.save("PPO-Spaceraft_1")
+log_path = "logging"
+model = PPO("MlpPolicy", env, verbose=1)
+model.learn(total_timesteps=int(20), progress_bar=True)
+model.save("PPO-Spaceraft_1")
 
 
 # # Visualization
 
 # In[54]:
+episodes = 1
+for episode in range(1, episodes + 1):
+    observation = env.reset()
+    done = False
+    total_reward = 0
 
+    while not done:
+        predicted_action,states = model.predict(observation)
+        observation, reward, done, info = env.step(predicted_action)
+        total_reward += reward
+
+    print("episode {} with score: {}".format(episode, total_reward))
+
+env.close()
 
 image_height = 1080
 image_width = 1920
@@ -594,6 +714,8 @@ xoff = int(xoff)
 yoff = int(yoff)
 print(xoff,yoff)
 video = cv2.VideoWriter(safe_name,cv2.VideoWriter_fourcc('m','p','4','v'), FPS, (image_width,image_height))
+print(n_timesteps)
+print(len(pos_x))
 for i in range(n_timesteps-1):
     # image = 255 * np.ones((image_height,image_width,3), np.uint8)
     # replace with cv2.imread(imageFile)
@@ -608,9 +730,9 @@ for i in range(n_timesteps-1):
 
     image = cv2.fillPoly(image, [(rotation(phi[i], left_fin_polygon)+flight_path[i,:]).reshape(-1,1,2)], (49,44,203))
 
-    exhaust_polygon_left = np.array([[-9, 2*scaler], [-7, (2 + 3*T_l/max_thrust)*scaler], [-5, 2*scaler]])
-    exhaust_polygon_right = np.array([[9, 2*scaler], [7, (2 + 3*T_r/max_thrust)*scaler], [5, 2*scaler]])
-    exhaust_polygon_center = np.array([[2, 2*scaler], [0, (2 + 3*T_c/max_thrust)*scaler], [-2, 2*scaler]])
+    exhaust_polygon_left = np.array([[-9, 2*scaler], [-7, (2 + 3*Tlog[i][0]/max_thrust)*scaler], [-5, 2*scaler]])
+    exhaust_polygon_right = np.array([[9, 2*scaler], [7, (2 + 3*Tlog[i][2]/max_thrust)*scaler], [5, 2*scaler]])
+    exhaust_polygon_center = np.array([[2, 2*scaler], [0, (2 + 3*Tlog[i][1]/max_thrust)*scaler], [-2, 2*scaler]])
     
     image = cv2.fillPoly(image, [(rotation(phi[i] + alpha, exhaust_polygon_left)+flight_path[i,:]).reshape(-1,1,2)], (39,188,248))
     image = cv2.fillPoly(image, [(rotation(phi[i], exhaust_polygon_center)+flight_path[i,:]).reshape(-1,1,2)], (39,188,248))

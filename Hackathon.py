@@ -261,6 +261,7 @@ class SpacecraftEnv(gym.Env):
         self.angle_history = [] # tuple of theta, alpha, beta
         self.velocity_history = [] # tuple of xdot, ydot
         self.thrust_history = [] # tuple of left, center, right engine
+        self.angular_history = [] # thetadots
 
         
         self.linear = linear
@@ -303,6 +304,7 @@ class SpacecraftEnv(gym.Env):
         ).astype(np.float32)
         
         self.observation_space = spaces.Box(low, high)
+        self.reason = ""
 
     def step(self, action):
         #CALCULATION
@@ -324,6 +326,7 @@ class SpacecraftEnv(gym.Env):
         self.rocket_velocity[1] = coor_sets[4]
         self.velocity_history.append((self.rocket_velocity[0], self.rocket_velocity[1]))
         self.rocket_angular_vel = coor_sets[5]
+        self.angular_history.append(self.rocket_angular_vel)
         #print(self.rocket_position)
         #print(self.rocket_velocity)
         
@@ -354,6 +357,7 @@ class SpacecraftEnv(gym.Env):
         if (abs(y_com - self.rocket_position[1]) <= epsilon):
             self.terminated = True
             print("#2: " + str(self.rocket_position[0]) + " "+ str(self.rocket_position[1]))
+            self.reason = "Rocket has landed"
             if (self.rocket_velocity[1] <= 1):
                 
                 reward += 10000 * (1.001 - self.rocket_velocity[1])    
@@ -363,7 +367,6 @@ class SpacecraftEnv(gym.Env):
         ### 3
         if (self.rocket_angle < math.radians(-30) or self.rocket_angle > math.radians(30)):
             reward -= (abs(self.rocket_angle) - math.radians(30))
-            
         ### 4
         if (self.rocket_position[1] < self.pad_position[1]):
             reward -= 25
@@ -371,10 +374,25 @@ class SpacecraftEnv(gym.Env):
         ### 5
         if (out_of_frame(self.rocket_position)):
             print("#5: " + str(self.rocket_position[0]) + " " + str(self.rocket_position[1]))
+            self.reason = "out of frame"
             reward -= 10000
             self.terminated = True
             
-        info = {}    
+        info = {}     
+        #update observation
+        rocket_position_x = self.rocket_position[0]
+        rocket_position_y = self.rocket_position[1]
+
+        rocket_velocity_x = self.rocket_velocity[0]
+        rocket_velocity_y = self.rocket_velocity[1]
+
+        rocket_angle = self.rocket_angle
+        rocket_angular_vel = self.rocket_angular_vel
+        
+        alpha = self.alpha
+        beta = self.beta
+
+        observation = [rocket_position_x, rocket_position_y, rocket_velocity_x, rocket_velocity_y, rocket_angle, rocket_angular_vel, alpha, beta]
         return observation, reward, self.terminated, info
 
     def reset(self):
@@ -385,16 +403,25 @@ class SpacecraftEnv(gym.Env):
         self.rocket_velocity = [-25, -25] #vec2 velocity
         self.rocket_accel = [0, 0]
         
-        self.rocket_angle = 0 #float angle
+        self.rocket_angle = phi0 #float angle
         self.rocket_angular_vel = 0 #float angular velocity
         self.rocket_angular_accel = 0
         self.is_touching_pad = False #bool is_touching_pad
         
         #general data
         self.terminated = False
+        self.reason = ""
         info = {}
         self.reward = 0
-        
+
+        # position history
+        self.pos_history = [] # tuple of x,y
+        self.angle_history = [] # tuple of theta, alpha, beta
+        self.velocity_history = [] # tuple of xdot, ydot
+        self.thrust_history = [] # tuple of left, center, right engine
+        self.angular_history = [] # thetadots
+
+
         rocket_position_x = self.rocket_position[0]
         rocket_position_y = self.rocket_position[1]
         rocket_velocity_x = self.rocket_velocity[0]
@@ -529,6 +556,8 @@ for i in range(n_timesteps-1):
     image = cv2.putText(image, 'Right Engine Thrust: %i [%%]' % int(env.thrust_history[i][2]/max_thrust*100), (50, 170), font, fontScale, color, thickness, cv2.LINE_AA)
     image = cv2.putText(image, 'Left Engine Gimbal Angle: %i [Degrees]' % int(-env.angle_history[i][1]*180/np.pi), (50, 190), font, fontScale, color, thickness, cv2.LINE_AA)
     image = cv2.putText(image, 'Right Engine Gimbal Angle: %i [Degrees]' % int(-env.angle_history[i][2]*180/np.pi), (50, 210), font, fontScale, color, thickness, cv2.LINE_AA)
+    if env.terminated:
+        image = cv2.putText(image, f"Simulation is terminated with reason: {env.reason}", (50, 230), font, fontScale, color, thickness, cv.LINE_AA)
 
     video.write(image)
 video.release()
@@ -538,33 +567,33 @@ video.release()
 
 # In[ ]:
 
-
 plt.figure(figsize=(24,5))
 plt.subplot(141)
-plt.plot(time[:-1], states[0,:-1], label='Position x')
-plt.plot(time[:-1], states[1,:-1], label='Position y')
+plt.plot(time[:len(env.pos_history)], px, label='Position x')
+plt.plot(time[:len(env.pos_history)], py, label='Position y')
 plt.xlabel('Time [s]')
 plt.ylabel('Position [m]')
 plt.legend()
 plt.grid()
-
+angle = np.array([i[0] for i in env.angle_history])
 plt.subplot(142)
-plt.plot(time[:-1], states[2,:-1]*180/np.pi, label='Rotation phi')
+plt.plot(time[:len(env.angle_history)], angle*180/np.pi, label='Rotation phi')
 plt.xlabel('Time [s]')
 plt.ylabel('Angle [°]')
 plt.legend()
 plt.grid()
-
+velo_x = [i[0] for i in env.velocity_history]
+velo_y = [i[1] for i in env.velocity_history]
 plt.subplot(143)
-plt.plot(time[:-1], states[3,:-1], label='Velocity x')
-plt.plot(time[:-1], states[4,:-1], label='Velocity y')
+plt.plot(time[:len(env.velocity_history)], velo_x, label='Velocity x')
+plt.plot(time[:len(env.velocity_history)], velo_y, label='Velocity y')
 plt.xlabel('Time [s]')
 plt.ylabel('Velocity [m/s]')
 plt.legend()
 plt.grid()
 
 plt.subplot(144)
-plt.plot(time[:-1], states[5,:-1]*180/np.pi, label='Velocity phi')
+plt.plot(time[:len(env.angular_history)], np.array(env.angular_history)*180/np.pi, label='Velocity phi')
 plt.xlabel('Time [s]')
 plt.ylabel('Velocity [°/s]')
 plt.legend()

@@ -138,4 +138,4 @@ ui-tests/playwright-report
 .pnp.*
 ui-tests/.yarn/*
 ui-tests/.pnp.*
-*.mp4
+test.mp4
